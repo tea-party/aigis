@@ -142,13 +142,27 @@ pub struct MyCoolIngestor {
 impl MyCoolIngestor {
     pub fn new(agent: BskyAgent, did: Did) -> anyhow::Result<Self> {
         let lang = Language::from_str("en").unwrap();
-        let akash_service = AkashChatService::new(None).context("Failed to create AkashChatService")?;
-        let gemini_service = GeminiService::new(None).context("Failed to create GeminiService")?;
+
+        // Create and use the custom resolver for the genai::Client
+        let custom_resolver = create_custom_resolver();
+        let client = genai::Client::builder()
+            .with_service_target_resolver(custom_resolver)
+            .build()
+            .context("Failed to build genai::Client with custom resolver")?;
+        let shared_client = Arc::new(client);
+
+        // Instantiate services with the shared client
+        // The system_prompt is set to None as per the refactoring in ai.rs, 
+        // where services now take Arc<Client> and Option<String>.
+        let akash_service = AkashChatService::new(shared_client.clone(), None);
+        let gemini_service = GeminiService::new(shared_client.clone(), None);
+        
         Ok(Self {
             agent,
             did,
             lang,
-            akash_service: Arc::new(akash_service),
+            // Storing Arc<AkashChatService> and Arc<GeminiService> as before
+            akash_service: Arc::new(akash_service), 
             gemini_service: Arc::new(gemini_service),
         })
     }
@@ -227,4 +241,4 @@ impl LexiconIngestor for MyCoolIngestor {
 }
 
 // Import AI services
-use crate::ai::{AiService, AkashChatService, GeminiService};
+use crate::ai::{AiService, AkashChatService, GeminiService, create_custom_resolver};
