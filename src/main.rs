@@ -9,6 +9,7 @@ use atrium_api::{
     com::atproto::repo::strong_ref::MainData,
     types::string::{Cid, Datetime, Did, Language},
 };
+use anyhow::Context;
 use bsky_sdk::BskyAgent;
 use cursor::load_cursor;
 use metrics_exporter_prometheus::PrometheusBuilder;
@@ -25,6 +26,7 @@ use rocketman::{
 
 use async_trait::async_trait;
 
+mod ai;
 mod cursor;
 mod embed;
 mod ingestors;
@@ -81,7 +83,7 @@ async fn main() {
     ingestors.insert(
         // your EXACT nsid
         "app.bsky.feed.post".to_string(),
-        Box::new(MyCoolIngestor::new(agent.clone(), did)),
+        Box::new(MyCoolIngestor::new(agent.clone(), did).expect("Failed to create MyCoolIngestor")),
     );
 
     // tracks the last message we've processed
@@ -133,12 +135,22 @@ pub struct MyCoolIngestor {
     agent: BskyAgent,
     did: Did,
     lang: Language,
+    akash_service: Arc<AkashChatService>,
+    gemini_service: Arc<GeminiService>,
 }
 
 impl MyCoolIngestor {
-    pub fn new(agent: BskyAgent, did: Did) -> Self {
+    pub fn new(agent: BskyAgent, did: Did) -> anyhow::Result<Self> {
         let lang = Language::from_str("en").unwrap();
-        Self { agent, did, lang }
+        let akash_service = AkashChatService::new(None).context("Failed to create AkashChatService")?;
+        let gemini_service = GeminiService::new(None).context("Failed to create GeminiService")?;
+        Ok(Self {
+            agent,
+            did,
+            lang,
+            akash_service: Arc::new(akash_service),
+            gemini_service: Arc::new(gemini_service),
+        })
     }
 }
 
@@ -156,6 +168,14 @@ impl LexiconIngestor for MyCoolIngestor {
         {
             let riposte =
                 serde_json::from_value::<atrium_api::app::bsky::feed::post::RecordData>(record)?;
+
+            // Define a prompt for the AI service
+            let prompt = "Generate a short, insightful comment about the state of social media in one sentence.";
+            // Call the AI service (AkashChatService in this case)
+            let ai_generated_text = self.akash_service.generate_response(prompt).await.unwrap_or_else(|e| {
+                error!("AkashChatService failed: {}", e);
+                "Hmm, interesting.".to_string()
+            });
 
             // get the cid
             let rcid = match Cid::from_str(&cid) {
@@ -198,10 +218,13 @@ impl LexiconIngestor for MyCoolIngestor {
                     langs: None,
                     reply,
                     tags: None,
-                    text: "yeh".to_string(),
+                    text: ai_generated_text,
                 })
                 .await?;
         }
         Ok(())
     }
 }
+
+// Import AI services
+use crate::ai::{AiService, AkashChatService, GeminiService};

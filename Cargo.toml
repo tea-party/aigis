@@ -21,3 +21,4 @@ atrium-api = { version = "0.25.3", features = ["tokio"] }
 dotenvy = "0.15.7"
 fastembed = "4.8.0"
 qdrant-client = "1.14.0"
+async-openai = "0.19.0"
