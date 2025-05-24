@@ -1,0 +1,5 @@
+services:
+  gork:
+    image: gork
+    env_file: .env
+    restart: always
