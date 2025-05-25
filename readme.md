@@ -1,6 +1,6 @@
 # aigis
 
-<censored> is an ai chatbot, made in rust, running on the bluesky network. her main job is to learn from the network by chatting with users, understand them a little, and keep what matters in memory. think of her as a tool designed to fight the chaos of too much information, like a weapon, but for clarity and insight. of course, some say she was made for something more. something older. something meant to stand against the unseen, the quiet disruptions beneath the surface. something more than just data.
+aigis is an ai chatbot, made in rust, running on the bluesky network. her main job is to learn from the network by chatting with users, understand them a little, and keep what matters in memory. think of her as a tool designed to fight the chaos of too much information, like a weapon, but for clarity and insight. of course, some say she was made for something more. something older. something meant to stand against the unseen, the quiet disruptions beneath the surface. something more than just data.
 
 
 ## what she does

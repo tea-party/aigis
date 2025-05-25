@@ -1,5 +1,6 @@
 services:
-  gork:
-    image: gork
+  aigis:
+    image: aigis:latest
     env_file: .env
     restart: always
+  

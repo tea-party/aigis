@@ -26,13 +26,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Docker Buildx Build Image
         run: |
-          docker buildx create --use
-
-          # If the event is a release, also tag and push with the release version
-          if [ "${{ github.event_name }}" == "release" ]; then
-            docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/${{ github.repository }}:latest -t ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}  --push .
-          else
-            docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/${{ github.repository }}:latest --push .
-          fi
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --tag ghcr.io/${{ github.repository }}:${GITHUB_REF_NAME#refs/tags/v} \
+            $(if [ "${{ github.ref_name }}" == "main" ]; then echo "--tag \
+              ghcr.io/${{ github.repository }}:latest"; fi) \
+            --push .
