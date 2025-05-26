@@ -6,7 +6,7 @@ use genai::{Client, ModelIden, ServiceTarget, adapter::AdapterKind};
 
 #[async_trait]
 pub trait AiService {
-    async fn generate_response(&self, messages: Vec<ChatMessage>) -> Result<String, Error>;
+    async fn generate_response(&self, messages: &Vec<ChatMessage>) -> Result<String, Error>;
 }
 
 // Structure for AkashChatService
@@ -53,12 +53,12 @@ impl LLMService {
 
 #[async_trait]
 impl AiService for LLMService {
-    async fn generate_response(&self, messages: Vec<ChatMessage>) -> Result<String, Error> {
+    async fn generate_response(&self, messages: &Vec<ChatMessage>) -> Result<String, Error> {
         // add our prompt to the beginning of the messages
         let mut all_msgs = vec![ChatMessage::system(
             self.system_prompt.clone().unwrap_or_default(),
         )];
-        all_msgs.extend(messages);
+        all_msgs.extend(messages.to_owned());
         let chat_req = ChatRequest::new(all_msgs);
 
         let chat_response = self

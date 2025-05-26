@@ -2,8 +2,8 @@ use qdrant_client::{
     Qdrant,
     config::QdrantConfig,
     qdrant::{
-        CreateCollectionBuilder, Distance, PointStruct, ScoredPoint, SearchPointsBuilder,
-        UpsertPointsBuilder, Value, VectorParamsBuilder,
+        CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint,
+        SearchPointsBuilder, UpsertPointsBuilder, Value, VectorParamsBuilder,
     },
 };
 use std::collections::HashMap;
@@ -18,12 +18,17 @@ impl VectorDb {
         let config = QdrantConfig::from_url(url);
         let client = Qdrant::new(config)?;
 
-        client
-            .create_collection(
-                CreateCollectionBuilder::new("{collection_name}")
-                    .vectors_config(VectorParamsBuilder::new(512, Distance::Cosine)),
-            )
-            .await?;
+        // if collection doesn't exist, create it
+        if let Err(_) = client.collection_info(collection_name).await {
+            client
+                .create_collection(
+                    CreateCollectionBuilder::new(collection_name)
+                        .on_disk_payload(true)
+                        .hnsw_config(HnswConfigDiffBuilder::default().on_disk(true))
+                        .vectors_config(VectorParamsBuilder::new(384, Distance::Cosine)),
+                )
+                .await?;
+        }
 
         Ok(VectorDb {
             client,
@@ -33,7 +38,7 @@ impl VectorDb {
 
     pub async fn store_memory(
         &self,
-        id: u64,
+        id: &str,
         vector: Vec<f32>,
         payload: &str,
     ) -> anyhow::Result<()> {

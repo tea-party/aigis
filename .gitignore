@@ -19,3 +19,5 @@ target/
 .env
 **/.DS_Store
 ./.DS_Store
+
+.fastembed_cache

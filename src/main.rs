@@ -20,8 +20,10 @@ use atrium_api::{
 };
 use bsky_sdk::BskyAgent;
 use cursor::load_cursor;
+use embed::Embedder;
 use genai::chat::ChatMessage;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, error, info};
 
@@ -34,6 +36,8 @@ use rocketman::{
 };
 
 use async_trait::async_trait;
+use uuid::Uuid;
+use vdb::VectorDb;
 
 mod ai;
 mod cursor;
@@ -112,12 +116,20 @@ async fn main() {
         }
     };
 
+    let vdb = VectorDb::new(
+        &std::env::var("QDRANT_URL").expect("qdrant url not set"),
+        &std::env::var("QDRANT_DB").unwrap_or("aigis-db".to_string()),
+    )
+    .await
+    .expect("qdrant db failed initialization");
+
     ingestors.insert(
         // your EXACT nsid
         "app.bsky.feed.post".to_string(),
         Box::new(PostListener::new(
             agent.clone(),
             did,
+            vdb,
             allowlist,
             system_message,
         )),
@@ -175,14 +187,15 @@ pub struct PostListener {
     lang: Language,
     allowlist: Option<Vec<String>>,
     aisvc: LLMService, // llm svc
-                       // emb: Embedder,
-                       // vdb: VectorDb,
+    emb: Embedder,
+    vdb: VectorDb,
 }
 
 impl PostListener {
     pub fn new(
         agent: BskyAgent,
         did: Did,
+        vdb: VectorDb,
         allowlist: Option<Vec<String>>,
         system_message: Option<String>,
     ) -> Self {
@@ -190,6 +203,7 @@ impl PostListener {
         let default_system_message = "You are an unhelpful assistant, named Aigis, that acts dumb and stupid. type in lowercase, and never ever add *actions* or use emojis as they are uncool. Don't mention Persona 3 topics unless explicitly asked about it. be extremely dumb and stupid. The messages you'll see are chat logs from a platform called Bluesky, they are in the format `username (handle): message`, but you only should reply to them with the message. Keep under a strict limit of 250 characters.";
         let aisvc = LLMService::new(system_message.as_deref().or(Some(default_system_message)))
             .expect("LLM Service initiated");
+        let emb = Embedder::new().expect("Embedder initialised");
         Self {
             agent,
             did_string: did.clone().to_string(),
@@ -197,6 +211,8 @@ impl PostListener {
             lang,
             allowlist,
             aisvc,
+            emb,
+            vdb,
         }
     }
 
@@ -399,7 +415,7 @@ impl LexiconIngestor for PostListener {
 
             let initial_resp = self
                 .aisvc
-                .generate_response(thread)
+                .generate_response(&thread)
                 .await
                 .inspect(|x| println!("original: {x}"))?;
 
@@ -417,7 +433,8 @@ impl LexiconIngestor for PostListener {
                 Err(e) => return Err(anyhow::anyhow!(e)),
             };
 
-            let reply = self.build_reply_ref(riposte.reply, rcid, message.did, collection, rkey);
+            let reply =
+                self.build_reply_ref(riposte.reply, rcid, message.did.clone(), collection, rkey);
 
             self.agent
                 .create_record(atrium_api::app::bsky::feed::post::RecordData {
@@ -432,7 +449,38 @@ impl LexiconIngestor for PostListener {
                     text: resp.trim().to_string(),
                 })
                 .await?;
-        }
+
+            let lm = thread.last().expect("thread has stuff in it");
+
+            // put vector db stuff in struct
+            let chat_log = ChatLog {
+                post: lm.content.clone().text_into_string().expect("text is some"),
+                response: resp.trim().to_string(),
+                poster_did: message.did.to_string(),
+            };
+
+            // serialize
+            let chat_log = serde_json::to_string(&chat_log)?;
+
+            // embed question + response
+            let vector = self.emb.embed(vec![chat_log.clone()])?;
+
+            // create uuid
+            // just random namespace for now? shouldn't clash so long as it's constant
+            let uuid = uuid::Uuid::new_v5(&Uuid::NAMESPACE_DNS, &chat_log.as_bytes());
+
+            // store in vector db
+            self.vdb
+                .store_memory(&uuid.to_string(), vector[0].clone(), &chat_log)
+                .await?;
+        };
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatLog {
+    post: String,
+    response: String,
+    poster_did: String,
 }
