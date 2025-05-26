@@ -10,7 +10,7 @@ on:
 
 jobs:
   build-amd64:
-    runs-on: [self-hosted, ubuntu-latest] # amd64 ubuntu latesr
+    runs-on: ubuntu-latest # amd64 ubuntu latesr
     steps:
       - uses: actions/checkout@v2
       - uses: docker/setup-buildx-action@v3
@@ -33,7 +33,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-arm64:
-    runs-on: [self-hosted, ubuntu-24.04-arm] # arm64 ubuntu latest
+    runs-on: ubuntu-24.04-arm # arm64 ubuntu latest
     steps:
       - uses: actions/checkout@v2
       - uses: docker/setup-buildx-action@v3
