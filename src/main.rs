@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     str::FromStr,
     sync::{Arc, Mutex},
     time::Instant,
@@ -486,25 +486,38 @@ impl LexiconIngestor for PostListener {
                 let vecs = self.emb.embed(texts)?;
 
                 // search db for similar posts
-                let similar_posts = self.vdb.batch_search_similar(vecs, 2).await?;
+                let mut similar_posts = self.vdb.batch_search_similar(vecs, 2).await?;
                 debug!("similar posts: {:?}", similar_posts);
-                // dedup
-                let mut search_results: BTreeSet<String> = BTreeSet::new();
+                // sort by score descending
+                similar_posts.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                // Fix: Remove broken dedup_by_key logic and dedup by id as string if possible
+                similar_posts.dedup_by_key(|p| {
+                    p.id.as_ref().and_then(|id| {
+                        id.point_id_options.as_ref().map(|opts| match opts {
+                            qdrant_client::qdrant::point_id::PointIdOptions::Num(n) => {
+                                n.to_string()
+                            }
+                            qdrant_client::qdrant::point_id::PointIdOptions::Uuid(u) => {
+                                u.to_string()
+                            }
+                        })
+                    })
+                });
+
+                let mut search_chats_str = String::new();
                 similar_posts
                     .into_iter()
                     .flat_map(|sp| sp.payload)
                     .for_each(|(_, value)| {
                         if let Some(st) = value.as_str() {
-                            search_results.insert(st.to_string());
+                            search_chats_str.push_str(&format!("{}\n", st));
                         }
                     });
-
-                // string together all search results into a single string
-                let mut search_chats_str = String::new();
-
-                for str in search_results {
-                    search_chats_str.push_str(&format!("{}\n", str));
-                }
 
                 debug!("search results: {:?}", &search_chats_str);
 
