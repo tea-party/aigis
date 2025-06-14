@@ -486,7 +486,7 @@ impl LexiconIngestor for PostListener {
                 let vecs = self.emb.embed(texts)?;
 
                 // search db for similar posts
-                let similar_posts = self.vdb.batch_search_similar(vecs, 10).await?;
+                let similar_posts = self.vdb.batch_search_similar(vecs, 2).await?;
                 debug!("similar posts: {:?}", similar_posts);
                 // dedup
                 let mut search_results: BTreeSet<String> = BTreeSet::new();
