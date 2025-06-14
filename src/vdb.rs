@@ -3,10 +3,11 @@ use qdrant_client::{
     config::QdrantConfig,
     qdrant::{
         CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint,
-        SearchPointsBuilder, UpsertPointsBuilder, Value, VectorParamsBuilder,
+        SearchBatchPoints, SearchBatchPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
+        Value, VectorParamsBuilder,
     },
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use tracing::debug;
 
 pub struct VectorDb {
@@ -73,5 +74,24 @@ impl VectorDb {
         debug!("Search result: {:?}", &search_result.result);
 
         Ok(search_result.result)
+    }
+
+    pub async fn batch_search_similar(
+        &self,
+        query_vectors: Vec<Vec<f32>>,
+        top: usize,
+    ) -> anyhow::Result<Vec<ScoredPoint>> {
+        let sbp_vecs = query_vectors
+            .into_iter()
+            .map(|vec| SearchPointsBuilder::new(&self.collection_name, vec, top as u64).build())
+            .collect::<Vec<_>>();
+
+        let batch = SearchBatchPointsBuilder::new(&self.collection_name, sbp_vecs);
+
+        let res = self.client.search_batch_points(batch).await?;
+
+        let unique_results = res.result.into_iter().flat_map(|r| r.result).collect();
+
+        Ok(unique_results)
     }
 }
