@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use ai::{AiService, LLMService};
@@ -23,10 +24,11 @@ use cursor::load_cursor;
 use embed::Embedder;
 use genai::chat::ChatMessage;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, info};
+use tracing::{Level, debug, error, event, info, trace};
 
 use rocketman::{
     connection::JetstreamConnection,
@@ -50,6 +52,13 @@ fn setup_tracing() {
     tracing_subscriber::fmt::init();
 }
 
+static POSTS_INGESTED: Lazy<metrics::Counter> =
+    Lazy::new(|| metrics::counter!("posts_ingested_total"));
+static INGEST_ERRORS: Lazy<metrics::Counter> =
+    Lazy::new(|| metrics::counter!("ingest_errors_total"));
+static INGEST_LATENCY: Lazy<metrics::Histogram> =
+    Lazy::new(|| metrics::histogram!("ingest_latency_seconds"));
+
 fn setup_metrics() {
     // Initialize metrics here
     if let Err(e) = PrometheusBuilder::new().install() {
@@ -61,6 +70,9 @@ fn setup_metrics() {
 }
 
 async fn setup_bsky_sess() -> anyhow::Result<(BskyAgent, Did)> {
+    let span = tracing::info_span!("setup_bsky_sess");
+    let _enter = span.enter();
+
     let agent = BskyAgent::builder().build().await?;
     let res = agent
         .login(std::env::var("ATP_USER")?, std::env::var("ATP_PASSWORD")?)
@@ -76,6 +88,10 @@ async fn main() {
     dotenvy::dotenv().ok();
     setup_tracing();
     setup_metrics();
+
+    let main_span = tracing::info_span!("main");
+    let _main_enter = main_span.enter();
+
     info!("gorkin it...");
 
     let (agent, did) = match setup_bsky_sess().await {
@@ -165,7 +181,7 @@ async fn main() {
                 if let Err(e) =
                     handler::handle_message(message, &ingestors, reconnect_tx, c_cursor).await
                 {
-                    eprintln!("Error processing message: {}", e);
+                    error!("Error processing message: {}", e);
                 }
                 drop(permit);
             });
@@ -220,6 +236,7 @@ impl PostListener {
         let aisvc = LLMService::new(system_message.as_deref().or(Some(default_system_message)))
             .expect("LLM Service initiated");
         let emb = Embedder::new().expect("Embedder initialised");
+        info!("Post listener initialized, ready to listen!");
         Self {
             agent,
             did_string: did.clone().to_string(),
@@ -399,104 +416,151 @@ impl PostListener {
 #[async_trait]
 impl LexiconIngestor for PostListener {
     async fn ingest(&self, message: Event<Value>) -> anyhow::Result<()> {
-        if let Some(Commit {
-            record: Some(record),
-            cid: Some(cid),
-            rkey,
-            collection,
-            ..
-        }) = message.commit
-        {
-            let riposte =
-                serde_json::from_value::<atrium_api::app::bsky::feed::post::RecordData>(record)?;
+        // set up timer
+        let timer = Instant::now();
 
-            //debug!("recieved {}", riposte.text);
+        let result = async {
+            if let Some(Commit {
+                record: Some(record),
+                cid: Some(cid),
+                rkey,
+                collection,
+                ..
+            }) = message.commit
+            {
+                let riposte = serde_json::from_value::<
+                    atrium_api::app::bsky::feed::post::RecordData,
+                >(record)?;
 
-            // is user mentioning me or allowlisted
-            if !self.is_me(riposte.clone()) || !self.is_allowlisted(&message.did) {
-                return Ok(());
-            }
-
-            debug!("replying...");
-
-            // get + build post thread by tracing parents
-            let thread = self
-                .atp_thread_to_chatmessages(&format!(
+                let span = tracing::info_span!("PostListener::ingest", aturl = %format!(
                     "at://{}/{}/{}",
                     message.did, collection, rkey
-                ))
-                .await?;
+                ));
+                let _enter = span.enter();
 
-            dbg!(&thread);
+                trace!("Processing post");
 
-            let initial_resp = self
-                .aisvc
-                .generate_response(&thread)
-                .await
-                .inspect(|x| println!("original: {x}"))?;
+                debug!("recieved {}", riposte.text);
 
-            // remove <think> tag
-            let resp = initial_resp
-                .split("</think>")
-                .collect::<Vec<&str>>()
-                .last()
-                .ok_or(anyhow::anyhow!("no response outputted?"))?
-                .to_string();
+                // is user mentioning me or allowlisted
+                if !self.is_me(riposte.clone()) || !self.is_allowlisted(&message.did) {
+                    return Ok(());
+                }
 
-            // if response is empty, just return ok
-            if resp.trim().is_empty() {
-                debug!("aigis doesn't want to reply, so not replying");
-                return Ok(());
+                trace!("replying...");
+
+                // get + build post thread by tracing parents
+                let thread = self
+                    .atp_thread_to_chatmessages(&format!(
+                        "at://{}/{}/{}",
+                        message.did, collection, rkey
+                    ))
+                    .await?;
+
+                dbg!(&thread);
+
+                let texts: Vec<String> = thread
+                    .iter()
+                    .filter_map(|post| post.content.text_as_str().map(|s| s.to_string()))
+                    .collect();
+
+                let vecs = self.emb.embed(texts)?;
+
+                // search db for similar posts
+
+                let similar_posts = self.vdb.batch_search_similar(vecs, 10);
+
+                let initial_resp = self
+                    .aisvc
+                    .generate_response(&thread)
+                    .await
+                    .inspect(|x| println!("original: {x}"))?;
+
+                // remove <think> tag
+                let resp = initial_resp
+                    .split("</think>")
+                    .collect::<Vec<&str>>()
+                    .last()
+                    .ok_or(anyhow::anyhow!("no response outputted?"))?
+                    .to_string();
+
+                // if response is empty, just return ok
+                if resp.trim().is_empty() {
+                    debug!("aigis doesn't want to reply, so not replying");
+                    return Ok(());
+                }
+
+                // get the cid
+                let rcid = match Cid::from_str(&cid) {
+                    Ok(r) => r,
+                    Err(e) => return Err(anyhow::anyhow!(e)),
+                };
+
+                let reply = self.build_reply_ref(
+                    riposte.reply,
+                    rcid,
+                    message.did.clone(),
+                    collection,
+                    rkey,
+                );
+
+                self.agent
+                    .create_record(atrium_api::app::bsky::feed::post::RecordData {
+                        created_at: Datetime::now(),
+                        embed: None,
+                        entities: None,
+                        facets: None,
+                        labels: None,
+                        langs: Some(vec![self.lang.clone()]),
+                        reply: Some(reply),
+                        tags: None,
+                        text: resp.trim().to_string(),
+                    })
+                    .await?;
+
+                let lm = thread.last().expect("thread has stuff in it");
+
+                // put vector db stuff in struct
+                let chat_log = ChatLog {
+                    post: lm.content.clone().text_into_string().expect("text is some"),
+                    response: resp.trim().to_string(),
+                    poster_did: message.did.to_string(),
+                };
+
+                // serialize
+                let chat_log = serde_json::to_string(&chat_log)?;
+
+                // embed question + response
+                let vector = self.emb.embed(vec![chat_log.clone()])?;
+
+                debug!("vector: {:?}", vector);
+
+                // create uuid
+                // just random namespace for now? shouldn't clash so long as it's constant
+                let uuid = uuid::Uuid::new_v5(&Uuid::NAMESPACE_DNS, &chat_log.as_bytes());
+
+                // store in vector db
+                self.vdb
+                    .store_memory(&uuid.to_string(), vector[0].clone(), &chat_log)
+                    .await?;
+            };
+            Ok(())
+        }
+        .await;
+
+        INGEST_LATENCY.record(timer.elapsed());
+
+        match result {
+            Ok(_) => {
+                POSTS_INGESTED.increment(1);
+                Ok(())
             }
-
-            // get the cid
-            let rcid = match Cid::from_str(&cid) {
-                Ok(r) => r,
-                Err(e) => return Err(anyhow::anyhow!(e)),
-            };
-
-            let reply =
-                self.build_reply_ref(riposte.reply, rcid, message.did.clone(), collection, rkey);
-
-            self.agent
-                .create_record(atrium_api::app::bsky::feed::post::RecordData {
-                    created_at: Datetime::now(),
-                    embed: None,
-                    entities: None,
-                    facets: None,
-                    labels: None,
-                    langs: Some(vec![self.lang.clone()]),
-                    reply: Some(reply),
-                    tags: None,
-                    text: resp.trim().to_string(),
-                })
-                .await?;
-
-            let lm = thread.last().expect("thread has stuff in it");
-
-            // put vector db stuff in struct
-            let chat_log = ChatLog {
-                post: lm.content.clone().text_into_string().expect("text is some"),
-                response: resp.trim().to_string(),
-                poster_did: message.did.to_string(),
-            };
-
-            // serialize
-            let chat_log = serde_json::to_string(&chat_log)?;
-
-            // embed question + response
-            let vector = self.emb.embed(vec![chat_log.clone()])?;
-
-            // create uuid
-            // just random namespace for now? shouldn't clash so long as it's constant
-            let uuid = uuid::Uuid::new_v5(&Uuid::NAMESPACE_DNS, &chat_log.as_bytes());
-
-            // store in vector db
-            self.vdb
-                .store_memory(&uuid.to_string(), vector[0].clone(), &chat_log)
-                .await?;
-        };
-        Ok(())
+            Err(e) => {
+                INGEST_ERRORS.increment(1);
+                error!(error = %e, "Failed to ingest post");
+                Err(e)
+            }
+        }
     }
 }
 

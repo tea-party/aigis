@@ -51,6 +51,7 @@ dependencies = [
  "genai",
  "metrics",
  "metrics-exporter-prometheus",
+ "once_cell",
  "qdrant-client",
  "rocketman",
  "serde",

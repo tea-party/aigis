@@ -1,6 +1,6 @@
 services:
   aigis:
-    image: aigis:latest
+    image: ghcr.io/tea-party/aigis:main
     env_file: .env
     restart: always
   qdrant:
