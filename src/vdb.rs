@@ -2,12 +2,11 @@ use qdrant_client::{
     Qdrant,
     config::QdrantConfig,
     qdrant::{
-        CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint,
-        SearchBatchPoints, SearchBatchPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
+        CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint, SearchBatchPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
         Value, VectorParamsBuilder,
     },
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use tracing::debug;
 
 pub struct VectorDb {

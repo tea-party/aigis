@@ -28,7 +28,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::Semaphore;
-use tracing::{Level, debug, error, event, info, trace};
+use tracing::{debug, error, info, trace};
 
 use rocketman::{
     connection::JetstreamConnection,
@@ -333,7 +333,7 @@ impl PostListener {
         let record_data =
             atrium_api::app::bsky::feed::post::RecordData::try_from_unknown(post.record.clone())?;
 
-        return Ok(format!("{}: {}", author, record_data.text));
+        Ok(format!("{}: {}", author, record_data.text))
     }
 
     // New helper function to collect posts by traversing up the parent chain
@@ -343,10 +343,10 @@ impl PostListener {
         posts: &mut Vec<Object<PostViewData>>,
     ) -> Result<()> {
         // Add the current post to the list
-        posts.push((*current_thread_view).post.clone());
+        posts.push(current_thread_view.post.clone());
 
         // Check if there's a parent and if it's a ThreadViewPost
-        if let Some(parent_thread_view) = (*current_thread_view).parent.clone() {
+        if let Some(parent_thread_view) = current_thread_view.parent.clone() {
             match parent_thread_view {
                 atrium_api::types::Union::Refs(r) => match r {
                     atrium_api::app::bsky::feed::defs::ThreadViewPostParentRefs::ThreadViewPost(
@@ -537,7 +537,7 @@ impl LexiconIngestor for PostListener {
 
                 // create uuid
                 // just random namespace for now? shouldn't clash so long as it's constant
-                let uuid = uuid::Uuid::new_v5(&Uuid::NAMESPACE_DNS, &chat_log.as_bytes());
+                let uuid = uuid::Uuid::new_v5(&Uuid::NAMESPACE_DNS, chat_log.as_bytes());
 
                 // store in vector db
                 self.vdb
