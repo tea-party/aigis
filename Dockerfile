@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     cargo build --release
 
-FROM debian:bookworm-slim AS runner
+FROM rust:slim-bookworm AS runner
 RUN apt-get update && apt-get install -y openssl
 COPY --from=builder /app/target/release/aigis /usr/local/bin/aigis
 COPY --from=builder /app/prompt.txt /prompt.txt
