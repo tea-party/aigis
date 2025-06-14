@@ -6,7 +6,11 @@ use genai::{Client, ModelIden, ServiceTarget, adapter::AdapterKind};
 
 #[async_trait]
 pub trait AiService {
-    async fn generate_response(&self, messages: &Vec<ChatMessage>) -> Result<String, Error>;
+    async fn generate_response(
+        &self,
+        messages: &Vec<ChatMessage>,
+        searched_messages: Option<&Vec<ChatMessage>>,
+    ) -> Result<String, Error>;
 }
 
 // Structure for AkashChatService
@@ -54,11 +58,28 @@ impl LLMService {
 
 #[async_trait]
 impl AiService for LLMService {
-    async fn generate_response(&self, messages: &Vec<ChatMessage>) -> Result<String, Error> {
+    async fn generate_response(
+        &self,
+        messages: &Vec<ChatMessage>,
+        searched_messages: Option<&Vec<ChatMessage>>,
+    ) -> Result<String, Error> {
         // add our prompt to the beginning of the messages
         let mut all_msgs = vec![ChatMessage::system(
             self.system_prompt.clone().unwrap_or_default(),
         )];
+
+        // if we have searched messages, add them to the beginning
+        if let Some(searched_msgs) = searched_messages {
+            all_msgs.push(ChatMessage::system(
+                "The following messages may help you when responding to the user. You can use them, or not.",
+            ));
+            all_msgs.extend(searched_msgs.to_owned());
+            // also, add a system separator message
+            all_msgs.push(ChatMessage::system(
+                "End of search results. Following are messages from the conversation thread history.",
+            ));
+        }
+
         all_msgs.extend(messages.to_owned());
         let chat_req = ChatRequest::new(all_msgs);
 

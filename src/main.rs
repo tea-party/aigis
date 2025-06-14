@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     str::FromStr,
     sync::{Arc, Mutex},
     time::Instant,
@@ -277,6 +277,25 @@ impl PostListener {
                 }
             }
         }
+        // is the quoted post us?
+        if let Some(embed) = post.embed {
+            match embed {
+                atrium_api::types::Union::Refs(e) => match e {
+                    atrium_api::app::bsky::feed::post::RecordEmbedRefs::AppBskyEmbedRecordMain(object) => {
+                        if object.record.uri.contains(&self.did_string) {
+                            return true;
+                        }
+                    },
+                    atrium_api::app::bsky::feed::post::RecordEmbedRefs::AppBskyEmbedRecordWithMediaMain(object) =>{
+                        if object.record.data.record.data.uri.contains(&self.did_string){
+                            return true;
+                        }
+                    },
+                    _ => (),
+                },
+                _ => ()
+            }
+        }
         false
     }
 
@@ -440,7 +459,7 @@ impl LexiconIngestor for PostListener {
 
                 trace!("Processing post");
 
-                debug!("recieved {}", riposte.text);
+                trace!("recieved {}", riposte.text);
 
                 // is user mentioning me or allowlisted
                 if !self.is_me(riposte.clone()) || !self.is_allowlisted(&message.did) {
@@ -467,12 +486,33 @@ impl LexiconIngestor for PostListener {
                 let vecs = self.emb.embed(texts)?;
 
                 // search db for similar posts
+                let similar_posts = self.vdb.batch_search_similar(vecs, 10).await?;
+                debug!("similar posts: {:?}", similar_posts);
+                // dedup
+                let mut search_results: BTreeSet<String> = BTreeSet::new();
+                similar_posts
+                    .into_iter()
+                    .flat_map(|sp| sp.payload)
+                    .for_each(|(_, value)| {
+                        if let Some(st) = value.as_str() {
+                            search_results.insert(st.to_string());
+                        }
+                    });
 
-                let similar_posts = self.vdb.batch_search_similar(vecs, 10);
+                // string together all search results into a single string
+                let mut search_chats_str = String::new();
+
+                for str in search_results {
+                    search_chats_str.push_str(&format!("{}\n", str));
+                }
+
+                debug!("search results: {:?}", &search_chats_str);
+
+                let search_results_cm = ChatMessage::system(search_chats_str);
 
                 let initial_resp = self
                     .aisvc
-                    .generate_response(&thread)
+                    .generate_response(&thread, Some(&vec![search_results_cm]))
                     .await
                     .inspect(|x| println!("original: {x}"))?;
 

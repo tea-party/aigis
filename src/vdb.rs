@@ -2,8 +2,9 @@ use qdrant_client::{
     Qdrant,
     config::QdrantConfig,
     qdrant::{
-        CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint, SearchBatchPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder,
-        Value, VectorParamsBuilder,
+        CreateCollectionBuilder, Distance, HnswConfigDiffBuilder, PointStruct, ScoredPoint,
+        SearchBatchPointsBuilder, SearchPointsBuilder, UpsertPointsBuilder, Value,
+        VectorParamsBuilder,
     },
 };
 use std::collections::HashMap;
@@ -82,7 +83,11 @@ impl VectorDb {
     ) -> anyhow::Result<Vec<ScoredPoint>> {
         let sbp_vecs = query_vectors
             .into_iter()
-            .map(|vec| SearchPointsBuilder::new(&self.collection_name, vec, top as u64).build())
+            .map(|vec| {
+                SearchPointsBuilder::new(&self.collection_name, vec, top as u64)
+                    .with_payload(true)
+                    .build()
+            })
             .collect::<Vec<_>>();
 
         let batch = SearchBatchPointsBuilder::new(&self.collection_name, sbp_vecs);
