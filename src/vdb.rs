@@ -7,6 +7,7 @@ use qdrant_client::{
     },
 };
 use std::collections::HashMap;
+use tracing::debug;
 
 pub struct VectorDb {
     client: Qdrant,
@@ -68,6 +69,8 @@ impl VectorDb {
                 top as u64,
             ))
             .await?;
+
+        debug!("Search result: {:?}", &search_result.result);
 
         Ok(search_result.result)
     }

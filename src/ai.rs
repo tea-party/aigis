@@ -15,7 +15,7 @@ pub struct LLMService {
     system_prompt: Option<String>,
 }
 
-const AKASH_MODELS: [&str; 1] = ["Qwen3-235B-A22B-FP8"];
+const AKASH_MODELS: [&str; 2] = ["Qwen3-235B-A22B-FP8", "DeepSeek-R1-0528"];
 
 impl LLMService {
     pub fn new(system_prompt: Option<&str>) -> Result<Self, Error> {
@@ -23,10 +23,11 @@ impl LLMService {
             |service_target: ServiceTarget| -> Result<ServiceTarget, genai::resolver::Error> {
                 let ServiceTarget { ref model, .. } = service_target;
                 // if we have a model supported by Akash
-                if AKASH_MODELS.contains(&&model.model_name.to_string().as_str()) {
+                let model_name = model.model_name.to_string();
+                if AKASH_MODELS.contains(&model_name.as_str()) {
                     let endpoint = Endpoint::from_static("https://chatapi.akash.network/api/v1/");
                     let auth = AuthData::from_env("AKASH_API_KEY");
-                    let model = ModelIden::new(AdapterKind::OpenAI, "Qwen3-235B-A22B-FP8");
+                    let model = ModelIden::new(AdapterKind::OpenAI, model_name);
                     Ok(ServiceTarget {
                         endpoint,
                         auth,
@@ -63,7 +64,7 @@ impl AiService for LLMService {
 
         let chat_response = self
             .client
-            .exec_chat("Qwen3-235B-A22B-FP8", chat_req, None)
+            .exec_chat("DeepSeek-R1-0528", chat_req, None)
             .await?;
 
         if let Some(content) = chat_response.content {

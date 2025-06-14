@@ -25,6 +25,7 @@ use genai::chat::ChatMessage;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use rocketman::{
@@ -46,9 +47,7 @@ mod ingestors;
 mod vdb;
 
 fn setup_tracing() {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    tracing_subscriber::fmt::init();
 }
 
 fn setup_metrics() {
@@ -135,6 +134,13 @@ async fn main() {
         )),
     );
 
+    let worker_count: usize = std::env::var("WORKER_COUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3); // Default to 3 workers if not set
+
+    let semaphore = Arc::new(Semaphore::new(worker_count));
+
     // tracks the last message we've processed
     let cursor: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(load_cursor().await));
 
@@ -145,14 +151,24 @@ async fn main() {
     // spawn a task to process messages from the queue.
     // this is a simple implementation, you can use a more complex one based on needs.
     let c_cursor = cursor.clone();
+    let c_semaphore = semaphore.clone();
+    let arcgestors = Arc::new(ingestors);
     tokio::spawn(async move {
         while let Ok(message) = msg_rx.recv_async().await {
-            if let Err(e) =
-                handler::handle_message(message, &ingestors, reconnect_tx.clone(), c_cursor.clone())
-                    .await
-            {
-                eprintln!("Error processing message: {}", e);
-            };
+            let permit = c_semaphore.clone().acquire_owned().await.unwrap();
+            let ingestors = arcgestors.clone();
+            let reconnect_tx = reconnect_tx.clone();
+            let c_cursor = c_cursor.clone();
+
+            tokio::spawn(async move {
+                // The permit is dropped when this async block ends, releasing it for another worker
+                if let Err(e) =
+                    handler::handle_message(message, &ingestors, reconnect_tx, c_cursor).await
+                {
+                    eprintln!("Error processing message: {}", e);
+                }
+                drop(permit);
+            });
         }
     });
 
@@ -394,7 +410,7 @@ impl LexiconIngestor for PostListener {
             let riposte =
                 serde_json::from_value::<atrium_api::app::bsky::feed::post::RecordData>(record)?;
 
-            debug!("recieved {}", riposte.text);
+            //debug!("recieved {}", riposte.text);
 
             // is user mentioning me or allowlisted
             if !self.is_me(riposte.clone()) || !self.is_allowlisted(&message.did) {
@@ -426,6 +442,12 @@ impl LexiconIngestor for PostListener {
                 .last()
                 .ok_or(anyhow::anyhow!("no response outputted?"))?
                 .to_string();
+
+            // if response is empty, just return ok
+            if resp.trim().is_empty() {
+                debug!("aigis doesn't want to reply, so not replying");
+                return Ok(());
+            }
 
             // get the cid
             let rcid = match Cid::from_str(&cid) {

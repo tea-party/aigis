@@ -1,8 +1,8 @@
 services:
-  aigis:
-    image: aigis:latest
-    env_file: .env
-    restart: always
+  # aigis:
+  #   image: aigis:latest
+  #   env_file: .env
+  #   restart: always
   qdrant:
     image: qdrant/qdrant:latest
     restart: always
