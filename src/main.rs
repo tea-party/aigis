@@ -5,7 +5,6 @@ use std::{
     time::Instant,
 };
 
-use ai::{AiService, LLMService};
 use anyhow::Result;
 use atrium_api::{
     app::bsky::feed::{
@@ -23,6 +22,7 @@ use bsky_sdk::BskyAgent;
 use cursor::load_cursor;
 use embed::Embedder;
 use genai::chat::ChatMessage;
+use llm::{AiService, LLMService};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -42,10 +42,12 @@ use async_trait::async_trait;
 use uuid::Uuid;
 use vdb::VectorDb;
 
-mod ai;
+mod cli;
 mod cursor;
 mod embed;
 mod ingestors;
+mod llm;
+mod tools;
 mod vdb;
 
 fn setup_tracing() {
@@ -88,6 +90,15 @@ async fn main() {
     dotenvy::dotenv().ok();
     setup_tracing();
     setup_metrics();
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--cli".to_string()) {
+        cli::run_cli().await.unwrap_or_else(|e| {
+            eprintln!("Error running CLI: {}", e);
+            std::process::exit(1);
+        });
+        return;
+    }
 
     let main_span = tracing::info_span!("main");
     let _main_enter = main_span.enter();
@@ -209,7 +220,7 @@ async fn main() {
     if let Err(e) = jetstream.connect(cursor.clone()).await {
         eprintln!("Failed to connect to Jetstream: {}", e);
         std::process::exit(1);
-    }
+    };
 }
 
 pub struct PostListener {
@@ -233,8 +244,12 @@ impl PostListener {
     ) -> Self {
         let lang = Language::from_str("en").unwrap();
         let default_system_message = "You are an unhelpful assistant, named Aigis, that acts dumb and stupid. type in lowercase, and never ever add *actions* or use emojis as they are uncool. Don't mention Persona 3 topics unless explicitly asked about it. be extremely dumb and stupid. The messages you'll see are chat logs from a platform called Bluesky, they are in the format `username (handle): message`, but you only should reply to them with the message. Keep under a strict limit of 250 characters.";
-        let aisvc = LLMService::new(system_message.as_deref().or(Some(default_system_message)))
-            .expect("LLM Service initiated");
+        let aisvc = LLMService::new(
+            system_message.as_deref().or(Some(default_system_message)),
+            vec![],
+            "DeepSeek-R1-0528",
+        )
+        .expect("LLM Service initiated");
         let emb = Embedder::new().expect("Embedder initialised");
         info!("Post listener initialized, ready to listen!");
         Self {
