@@ -24,6 +24,11 @@ fn add_osc8_hyperlinks(input: &str) -> String {
     .to_string()
 }
 
+fn clear_line() {
+    // ANSI escape code to clear the entire line
+    print!("\r\x1b[2K");
+}
+
 const TOOL_CALL_TIMES: usize = 3; // Maximum number of repeated tool calls allowed
 
 /// Streams and prints the assistant's response, returning the accumulated response string.
@@ -33,6 +38,14 @@ async fn print_assistant_response_stream(
 ) -> String {
     let mut response_accum = String::new();
     let stream = llm_service.generate_response_stream(messages, None).await;
+    let mut is_spinner_at_end = false;
+    let spinner_frames = ['✴', '✦', '✶', '✺', '✶', '✦', '✴'];
+    let mut spinner_index = 0;
+    let mut last_spinner_update = Instant::now();
+
+    fn clear_line() {
+        print!("\r\x1b[2K");
+    }
 
     let skin = MadSkin::default();
 
@@ -42,9 +55,6 @@ async fn print_assistant_response_stream(
         io::stdout().flush().unwrap();
 
         let mut is_thinking = false;
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let mut spinner_index = 0;
-        let mut last_spinner_update = Instant::now();
 
         // Markdown block tracking
         let mut in_code_block = false;
@@ -92,6 +102,7 @@ async fn print_assistant_response_stream(
                                         // Closed code block: render and print
                                         let with_links = add_osc8_hyperlinks(&block_buffer);
                                         let rendered = skin.term_text(&with_links);
+                                        clear_line();
                                         print!("{}", rendered);
                                         io::stdout().flush().unwrap();
                                         block_buffer.clear();
@@ -109,6 +120,7 @@ async fn print_assistant_response_stream(
                                     in_list = false;
                                     let with_links = add_osc8_hyperlinks(&block_buffer);
                                     let rendered = skin.term_text(&with_links);
+                                    clear_line();
                                     print!("{}", rendered);
                                     io::stdout().flush().unwrap();
                                     block_buffer.clear();
@@ -125,6 +137,7 @@ async fn print_assistant_response_stream(
                                     in_table = false;
                                     let with_links = add_osc8_hyperlinks(&block_buffer);
                                     let rendered = skin.term_text(&with_links);
+                                    clear_line();
                                     print!("{}", rendered);
                                     io::stdout().flush().unwrap();
                                     block_buffer.clear();
@@ -139,6 +152,7 @@ async fn print_assistant_response_stream(
                                     block_buffer.push_str(line);
                                     let with_links = add_osc8_hyperlinks(&block_buffer);
                                     let rendered = skin.term_text(&with_links);
+                                    clear_line();
                                     print!("{}", rendered);
                                     io::stdout().flush().unwrap();
                                     block_buffer.clear();
@@ -149,11 +163,26 @@ async fn print_assistant_response_stream(
                                 line_buffer.clear();
                             }
                         }
-                        // Show a dot at the end of the current block to indicate streaming,
-                        // but only print the dot (not the whole buffer) to avoid repeated output.
-                        if !block_buffer.trim().is_empty() {
-                            print!("\r·"); // Clear previous spinner line
+                        // Only show spinner if waiting for content and not about to print new content
+                        if block_buffer.trim().is_empty() {
+                            if is_spinner_at_end {
+                                clear_line();
+                                is_spinner_at_end = false;
+                            }
+                            // Print content only, no spinner prefix
+                            clear_line();
+                            print!("{}", block_buffer);
                             io::stdout().flush().unwrap();
+                        } else {
+                            // Animate spinner only while waiting for next token
+                            if last_spinner_update.elapsed() >= Duration::from_millis(100) {
+                                clear_line();
+                                print!("{}", spinner_frames[spinner_index % spinner_frames.len()]);
+                                io::stdout().flush().unwrap();
+                                spinner_index += 1;
+                                last_spinner_update = Instant::now();
+                            }
+                            is_spinner_at_end = true;
                         }
                     }
                     genai::chat::ChatStreamEvent::ReasoningChunk(_stream_chunk) => {
@@ -203,12 +232,24 @@ pub async fn run_cli() -> Result<()> {
     // get formatted current time (to provide to the LLMService)
     let current_time =
         time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339)?;
+
+    let default_prompt = format!(
+        "You are a helpful assistant. Keep your thoughts short and sweet, and take extra special note of previous responses, especially for tool use. The current time is {}",
+        current_time
+    );
+
+    // load the system prompt from 'prompt.txt' if it exists
+    let prompt_path: &str = "prompt_cli.txt";
+    let prompt_string = std::fs::read_to_string(prompt_path).ok();
+    let mut system_prompt: Option<&str> = prompt_string.as_deref();
+
+    if let None = system_prompt {
+        system_prompt = Some(&default_prompt);
+    }
+
     // Initialize LLMService with tools
     let mut llm_service = LLMService::new(
-        Some(
-            &("You are a helpful assistant. Keep your thoughts short and sweet, and take extra special note of previous responses, especially for tool use. The current time is ".to_owned()
-                + &current_time),
-        ),
+        system_prompt,
         vec![
             Box::new(MathTool),
             Box::new(DDGSearchTool),
