@@ -1,12 +1,12 @@
 use std::pin::Pin;
 
 use crate::tools::AiTool;
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use genai::chat::{ChatMessage, ChatRequest};
 use genai::resolver::{AuthData, Endpoint, ServiceTargetResolver};
-use genai::{Client, ModelIden, ServiceTarget, adapter::AdapterKind};
+use genai::{adapter::AdapterKind, Client, ModelIden, ServiceTarget};
 
 #[async_trait]
 pub trait AiService {
@@ -68,13 +68,16 @@ impl LLMService {
         // Compose tool context for the system prompt
         let mut tool_context = String::new();
         if !tools.is_empty() {
-            tool_context.push_str("You have access to the following tools:\n");
+            tool_context
+                .push_str("**About tool calling**\nYou have access to the following tools:\n");
             for tool in &tools {
                 tool_context.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
             }
             tool_context.push_str(
-                "For each function call, follow this exact format:\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n",
+                "For each function call, follow this exact format. For single function calls, output as text:\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n For multiple function calls, do:\n \n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
             );
+            tool_context
+                .push_str("Never ever simulate calling tools when you're thinking, or in text.");
         }
 
         let merged_prompt = match system_prompt {

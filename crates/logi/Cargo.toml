@@ -1,0 +1,38 @@
+[package]
+name = "logi"
+version = "0.1.0"
+edition = "2021"
+description = "Core logic and shared types for the aigis project."
+
+[lib]
+name = "logi"
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+genai.workspace = true
+
+bsky-sdk = "0.1"
+rocketman = "0.1"
+metrics = "0.24.2"
+metrics-exporter-prometheus = "0.17.0"
+atrium-api = { version = "0.25.3", features = ["tokio"] }
+dotenvy = "0.15.7"
+fastembed = "4.8.0"
+qdrant-client = "1.14.0"
+uuid = { version = "1.17.0", features = ["v5"] }
+once_cell = "1.21.3"
+futures-core = "0.3.31"
+calc = "0.4.0"
+reqwest = "0.12.20"
+scraper = "0.23.1"
+fast_html2md = "0.0.48"

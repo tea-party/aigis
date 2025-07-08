@@ -1,0 +1,24 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line interface for the aigis project."
+
+[[bin]]
+name = "cli"
+path = "src/main.rs"
+
+[dependencies]
+logi = { path = "../logi" }
+tokio.workspace = true
+anyhow.workspace = true
+colored.workspace = true
+termimad.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+genai.workspace = true
+time.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+
+dotenvy = "0.15.7"

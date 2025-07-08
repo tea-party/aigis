@@ -1,4 +1,4 @@
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use calc::Context;
 use serde_json::Value;
 
@@ -15,6 +15,8 @@ impl AiTool for MathTool {
 
     fn description(&self) -> &str {
         r#"A powerful calculator tool that can evaluate mathematical expressions.
+Supports basic arithmetic, bitwise operations, shifts, and functions like sin, cos, tan, etc.
+Do not use this tool for complex logic, programming, or string concatenation tasks, it is strictly for mathematical calculations.
 
 order of ops:
     ( ) unary: - ! shifts/exp: << >>> >> < bitwise: & | ^ mult/div: * / // % add/sub: + -

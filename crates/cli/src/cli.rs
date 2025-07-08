@@ -1,18 +1,17 @@
-use crate::llm::AiService;
-use crate::llm::LLMService;
-use crate::tools::calc::MathTool;
-use crate::tools::search::DDGSearchTool;
-use crate::tools::website::WebsiteTool;
 use anyhow::Result;
 use colored::*;
 use futures_util::StreamExt;
 use genai::chat::ChatMessage;
 use genai::chat::ToolResponse;
+use logi::llm::{AiService, LLMService};
+use logi::tools::calc::MathTool;
+use logi::tools::search::DDGSearchTool;
+use logi::tools::website::WebsiteTool;
 use regex::Regex;
 use std::io::{self, Write};
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use termimad::MadSkin;
+
 /// Replace Markdown links with OSC 8 hyperlinks for supported terminals.
 fn add_osc8_hyperlinks(input: &str) -> String {
     let re = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
@@ -43,63 +42,74 @@ async fn print_assistant_response_stream(
     let mut spinner_index = 0;
     let mut last_spinner_update = Instant::now();
 
-    fn clear_line() {
-        print!("\r\x1b[2K");
-    }
-
     let skin = MadSkin::default();
 
-    if let Ok(mut stream) = stream {
-        print!("{}", "Assistant:".green().bold());
-        print!(" ");
-        io::stdout().flush().unwrap();
+    match stream {
+        Ok(mut stream) => {
+            print!("{}", "Assistant:".green().bold());
+            print!(" ");
+            io::stdout().flush().unwrap();
+            let mut is_thinking = false;
+            let mut in_code_block = false;
+            let mut in_list = false;
+            let mut in_table = false;
+            let mut block_buffer = String::new();
+            let mut line_buffer = String::new();
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => match chunk {
+                        genai::chat::ChatStreamEvent::Chunk(stream_chunk) => {
+                            if is_thinking {
+                                print!("\r{}", " ".repeat(40)); // Clear spinner line
+                                print!("\r{}", "--- Done!\n".green().bold());
+                                is_thinking = false;
+                            }
+                            response_accum.push_str(&stream_chunk.content);
 
-        let mut is_thinking = false;
+                            // Buffer and process lines
+                            for c in stream_chunk.content.chars() {
+                                line_buffer.push(c);
+                                if c == '\n' {
+                                    let line = line_buffer.as_str();
+                                    let trimmed = line.trim_start();
 
-        // Markdown block tracking
-        let mut in_code_block = false;
-        let mut in_list = false;
-        let mut in_table = false;
-        let mut block_buffer = String::new();
-        let mut line_buffer = String::new();
+                                    // Detect block starts/ends
+                                    let is_code = trimmed.starts_with("```");
+                                    let is_list = trimmed.starts_with("- ")
+                                        || trimmed.starts_with("* ")
+                                        || trimmed.starts_with("+ ")
+                                        || (trimmed
+                                            .chars()
+                                            .next()
+                                            .map(|c| c.is_ascii_digit())
+                                            .unwrap_or(false)
+                                            && trimmed.contains(". "));
+                                    let is_table = line.contains('|') && line.contains("---");
 
-        while let Some(chunk_result) = stream.next().await {
-            match chunk_result {
-                Ok(chunk) => match chunk {
-                    genai::chat::ChatStreamEvent::Chunk(stream_chunk) => {
-                        if is_thinking {
-                            print!("\r{}", " ".repeat(40)); // Clear spinner line
-                            print!("\r{}", "--- Done!\n".green().bold());
-                            is_thinking = false;
-                        }
-                        response_accum.push_str(&stream_chunk.content);
-
-                        // Buffer and process lines
-                        for c in stream_chunk.content.chars() {
-                            line_buffer.push(c);
-                            if c == '\n' {
-                                let line = line_buffer.as_str();
-                                let trimmed = line.trim_start();
-
-                                // Detect block starts/ends
-                                let is_code = trimmed.starts_with("```");
-                                let is_list = trimmed.starts_with("- ")
-                                    || trimmed.starts_with("* ")
-                                    || trimmed.starts_with("+ ")
-                                    || (trimmed
-                                        .chars()
-                                        .next()
-                                        .map(|c| c.is_ascii_digit())
-                                        .unwrap_or(false)
-                                        && trimmed.contains(". "));
-                                let is_table = line.contains('|') && line.contains("---");
-
-                                // Code block logic
-                                if is_code {
-                                    block_buffer.push_str(line);
-                                    in_code_block = !in_code_block;
-                                    if !in_code_block {
-                                        // Closed code block: render and print
+                                    // Code block logic
+                                    if is_code {
+                                        block_buffer.push_str(line);
+                                        in_code_block = !in_code_block;
+                                        if !in_code_block {
+                                            // Closed code block: render and print
+                                            let with_links = add_osc8_hyperlinks(&block_buffer);
+                                            let rendered = skin.term_text(&with_links);
+                                            clear_line();
+                                            print!("{}", rendered);
+                                            io::stdout().flush().unwrap();
+                                            block_buffer.clear();
+                                        }
+                                    }
+                                    // List logic
+                                    else if is_list {
+                                        block_buffer.push_str(line);
+                                        if !in_list {
+                                            in_list = true;
+                                        }
+                                    } else if in_list && trimmed.is_empty() {
+                                        // End of list: render and print
+                                        block_buffer.push_str(line);
+                                        in_list = false;
                                         let with_links = add_osc8_hyperlinks(&block_buffer);
                                         let rendered = skin.term_text(&with_links);
                                         clear_line();
@@ -107,122 +117,115 @@ async fn print_assistant_response_stream(
                                         io::stdout().flush().unwrap();
                                         block_buffer.clear();
                                     }
-                                }
-                                // List logic
-                                else if is_list {
-                                    block_buffer.push_str(line);
-                                    if !in_list {
-                                        in_list = true;
+                                    // Table logic
+                                    else if is_table {
+                                        block_buffer.push_str(line);
+                                        if !in_table {
+                                            in_table = true;
+                                        }
+                                    } else if in_table && trimmed.is_empty() {
+                                        // End of table: render and print
+                                        block_buffer.push_str(line);
+                                        in_table = false;
+                                        let with_links = add_osc8_hyperlinks(&block_buffer);
+                                        let rendered = skin.term_text(&with_links);
+                                        clear_line();
+                                        print!("{}", rendered);
+                                        io::stdout().flush().unwrap();
+                                        block_buffer.clear();
                                     }
-                                } else if in_list && trimmed.is_empty() {
-                                    // End of list: render and print
-                                    block_buffer.push_str(line);
-                                    in_list = false;
-                                    let with_links = add_osc8_hyperlinks(&block_buffer);
-                                    let rendered = skin.term_text(&with_links);
-                                    clear_line();
-                                    print!("{}", rendered);
-                                    io::stdout().flush().unwrap();
-                                    block_buffer.clear();
-                                }
-                                // Table logic
-                                else if is_table {
-                                    block_buffer.push_str(line);
-                                    if !in_table {
-                                        in_table = true;
+                                    // Paragraph/normal text
+                                    else if !in_code_block
+                                        && !in_list
+                                        && !in_table
+                                        && trimmed.is_empty()
+                                    {
+                                        // End of paragraph: render and print
+                                        block_buffer.push_str(line);
+                                        let with_links = add_osc8_hyperlinks(&block_buffer);
+                                        let rendered = skin.term_text(&with_links);
+                                        clear_line();
+                                        print!("{}", rendered);
+                                        io::stdout().flush().unwrap();
+                                        block_buffer.clear();
+                                    } else {
+                                        block_buffer.push_str(line);
                                     }
-                                } else if in_table && trimmed.is_empty() {
-                                    // End of table: render and print
-                                    block_buffer.push_str(line);
-                                    in_table = false;
-                                    let with_links = add_osc8_hyperlinks(&block_buffer);
-                                    let rendered = skin.term_text(&with_links);
-                                    clear_line();
-                                    print!("{}", rendered);
-                                    io::stdout().flush().unwrap();
-                                    block_buffer.clear();
-                                }
-                                // Paragraph/normal text
-                                else if !in_code_block
-                                    && !in_list
-                                    && !in_table
-                                    && trimmed.is_empty()
-                                {
-                                    // End of paragraph: render and print
-                                    block_buffer.push_str(line);
-                                    let with_links = add_osc8_hyperlinks(&block_buffer);
-                                    let rendered = skin.term_text(&with_links);
-                                    clear_line();
-                                    print!("{}", rendered);
-                                    io::stdout().flush().unwrap();
-                                    block_buffer.clear();
-                                } else {
-                                    block_buffer.push_str(line);
-                                }
 
-                                line_buffer.clear();
+                                    line_buffer.clear();
+                                }
+                            }
+                            // Only show spinner if waiting for content and not about to print new content
+                            if block_buffer.trim().is_empty() {
+                                if is_spinner_at_end {
+                                    clear_line();
+                                    is_spinner_at_end = false;
+                                }
+                                // Print content only, no spinner prefix
+                                clear_line();
+                                print!("{}", block_buffer);
+                                io::stdout().flush().unwrap();
+                            } else {
+                                // Animate spinner only while waiting for next token
+                                if last_spinner_update.elapsed() >= Duration::from_millis(100) {
+                                    clear_line();
+                                    print!(
+                                        "{}",
+                                        spinner_frames[spinner_index % spinner_frames.len()]
+                                    );
+                                    io::stdout().flush().unwrap();
+                                    spinner_index += 1;
+                                    last_spinner_update = Instant::now();
+                                }
+                                is_spinner_at_end = true;
                             }
                         }
-                        // Only show spinner if waiting for content and not about to print new content
-                        if block_buffer.trim().is_empty() {
-                            if is_spinner_at_end {
-                                clear_line();
-                                is_spinner_at_end = false;
+                        genai::chat::ChatStreamEvent::ReasoningChunk(_stream_chunk) => {
+                            if !is_thinking {
+                                print!("\r{}", "--- Thinking... ".yellow().bold());
+                                io::stdout().flush().unwrap();
+                                is_thinking = true;
+                                spinner_index = 0;
+                                last_spinner_update = Instant::now();
                             }
-                            // Print content only, no spinner prefix
-                            clear_line();
-                            print!("{}", block_buffer);
-                            io::stdout().flush().unwrap();
-                        } else {
-                            // Animate spinner only while waiting for next token
+                            // Animate spinner every ~100ms
                             if last_spinner_update.elapsed() >= Duration::from_millis(100) {
-                                clear_line();
-                                print!("{}", spinner_frames[spinner_index % spinner_frames.len()]);
+                                print!(
+                                    "\r{} Thinking...",
+                                    spinner_frames[spinner_index % spinner_frames.len()]
+                                );
                                 io::stdout().flush().unwrap();
                                 spinner_index += 1;
                                 last_spinner_update = Instant::now();
                             }
-                            is_spinner_at_end = true;
                         }
+                        _ => (),
+                    },
+                    Err(e) => {
+                        println!("{}", format!("\nError: {}", e).red().bold());
+                        break;
                     }
-                    genai::chat::ChatStreamEvent::ReasoningChunk(_stream_chunk) => {
-                        if !is_thinking {
-                            print!("\r{}", "--- Thinking... ".yellow().bold());
-                            io::stdout().flush().unwrap();
-                            is_thinking = true;
-                            spinner_index = 0;
-                            last_spinner_update = Instant::now();
-                        }
-                        // Animate spinner every ~100ms
-                        if last_spinner_update.elapsed() >= Duration::from_millis(100) {
-                            print!(
-                                "\r{} Thinking...",
-                                spinner_frames[spinner_index % spinner_frames.len()]
-                            );
-                            io::stdout().flush().unwrap();
-                            spinner_index += 1;
-                            last_spinner_update = Instant::now();
-                        }
-                    }
-                    _ => (),
-                },
-                Err(e) => {
-                    println!("{}", format!("\nError: {}", e).red().bold());
-                    break;
                 }
             }
+            if !block_buffer.trim().is_empty() {
+                let with_links = add_osc8_hyperlinks(&block_buffer);
+                let rendered = skin.term_text(&with_links);
+                print!("{}", rendered);
+            }
+            if is_thinking {
+                print!("\r{}", " ".repeat(40)); // Clear spinner line
+                print!("\r{}", "--- Done!\n".green().bold());
+            }
+            println!();
         }
-        // Flush any remaining buffered block
-        if !block_buffer.trim().is_empty() {
-            let with_links = add_osc8_hyperlinks(&block_buffer);
-            let rendered = skin.term_text(&with_links);
-            print!("{}", rendered);
+        Err(e) => {
+            println!(
+                "{}: {e}",
+                "Error: Failed to get response stream from LLMService"
+                    .red()
+                    .bold()
+            );
         }
-        if is_thinking {
-            print!("\r{}", " ".repeat(40)); // Clear spinner line
-            print!("\r{}", "--- Done!\n".green().bold());
-        }
-        println!();
     }
     response_accum
 }
@@ -326,7 +329,7 @@ pub async fn run_cli() -> Result<()> {
             messages.push(ChatMessage::user(input.to_string()));
 
             // Streaming response with tool call support
-            use crate::tools::{execute_tool_calls, parse_tool_calls};
+            use logi::tools::{execute_tool_calls, parse_tool_calls};
 
             // Use the helper function for initial assistant response
             let stream_messages = messages.clone();

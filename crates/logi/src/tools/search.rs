@@ -30,7 +30,7 @@ impl AiTool for DDGSearchTool {
     }
 
     fn description(&self) -> &str {
-        r#"Searches the web using DuckDuckGo.
+        r#"Searches the web using DuckDuckGo. Use this tool liberally to find information you aren't certain about.
 Important search operators:
 cats dogs	results about cats or dogs
 "cats and dogs"	exact term (avoid unless necessary)
@@ -50,11 +50,11 @@ Usage: { \"query\": \"rust async traits\" }"#
         let params: SearchParams = serde_json::from_value(args.clone())
             .map_err(|_| anyhow!("Missing or invalid 'query' parameter"))?;
         let client = reqwest::Client::new();
-        let url = format!("https://duckduckgo.com/html/?q={}", params.query);
+        let url = format!("https://html.duckduckgo.com/html/?q={}", params.query);
         let resp = client
             .get(&url)
-            .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-            .header("user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:139.0) Gecko/20100101 Firefox/139.0")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0")
             .send()
             .await
             .map_err(|e| anyhow!("Request error: {}", e))?;

@@ -1,4 +1,4 @@
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use serde_json::Value;
 use tracing::debug;
 
@@ -32,6 +32,7 @@ Example usage: { "website": "https://example.com", "render": "md"}
 
         let resp = client
             .get(website)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36 Edg/114.0.1823.67a")
             .send()
             .await
             .map_err(|e| anyhow!("Request error: {}", e))?;

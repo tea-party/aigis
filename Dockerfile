@@ -20,6 +20,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM rust:slim-bookworm AS runner
 RUN apt-get update && apt-get install -y openssl
-COPY --from=builder /app/target/release/aigis /usr/local/bin/aigis
+COPY --from=builder /app/target/release/bluesky-bot /usr/local/bin/bluesky-bot
 COPY --from=builder /app/prompt.txt /prompt.txt
-CMD ["aigis"]
+CMD ["bluesky-bot"]
