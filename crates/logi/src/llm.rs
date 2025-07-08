@@ -68,16 +68,36 @@ impl LLMService {
         // Compose tool context for the system prompt
         let mut tool_context = String::new();
         if !tools.is_empty() {
-            tool_context
-                .push_str("**About tool calling**\nYou have access to the following tools:\n");
-            for tool in &tools {
-                tool_context.push_str(&format!("- {}: {}\n", tool.name(), tool.description()));
-            }
-            tool_context.push_str(
-                "For each function call, follow this exact format. For single function calls, output as text:\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n For multiple function calls, do:\n \n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name\n```json\n{\"param1\": \"value1\", \"param2\": \"value2\"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>",
-            );
-            tool_context
-                .push_str("Never ever simulate calling tools when you're thinking, or in text.");
+            let tool_list: String = tools
+                .iter()
+                .map(|tool| format!("* `{}`: {}", tool.name(), tool.description()))
+                .collect::<Vec<String>>()
+                .join("\n");
+            tool_context = format!("\
+            **About tool calling**
+            You have access to the following tools:
+            {tool_list}
+
+            When calling tools, you MUST output the function call(s) in the following format, with NO deviations, substitutions, or omissions. The format must be followed EXACTLY, including all special tokens, triple backticks, and the json language identifier.
+            For a single function call, output:
+            <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name
+            ```json
+            {{\"param1\": \"value1\", \"param2\": \"value2\"}}
+            ```
+            <｜tool▁call▁end｜><｜tool▁calls▁end｜>
+
+            For multiple function calls, do:
+            <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name
+            ```json
+            {{\"param1\": \"value1\", \"param2\": \"value2\"}}
+            ```
+            <｜tool▁call▁end｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>function_name
+            ```json
+            {{\"param1\": \"value1\", \"param2\": \"value2\"}}
+            ```
+            <｜tool▁call▁end｜><｜tool▁calls▁end｜>
+
+            Do not add, remove, or change any part of this format. Do not simulate tool calls in any other way. Only use this format for tool calls.");
         }
 
         let merged_prompt = match system_prompt {
