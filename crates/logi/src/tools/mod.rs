@@ -1,4 +1,4 @@
-use anyhow::{Error, anyhow};
+use anyhow::{anyhow, Error};
 use regex::Regex;
 use serde_json::Value;
 use tracing::info;
@@ -30,15 +30,36 @@ pub struct ToolCall {
 /// ```<｜tool▁call▁end｜><｜tool▁calls▁end｜>
 pub fn parse_tool_calls(response: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
-    let re = Regex::new(
+    // Regex for the new special format
+    let re_new = Regex::new(
         r"<\u{FF5C}tool▁call▁begin\u{FF5C}>(?P<type>\w+)<\u{FF5C}tool▁sep\u{FF5C}>(?P<name>\w+)\s*```json\s*(?P<args>\{.*?\})\s*```<\u{FF5C}tool▁call▁end\u{FF5C}>"
-).unwrap();
+    ).unwrap();
+    // Regex for the format without tags: function function_name ```json {...} ```
+    let re_old =
+        Regex::new(r"function\s+(?P<name>\w+)\s*```json\s*(?P<args>\{.*?\})\s*```").unwrap();
 
-    for cap in re.captures_iter(response) {
+    // First, try to find all new-format tool calls
+    for cap in re_new.captures_iter(response) {
         let tool_type = cap
             .name("type")
             .map(|m| m.as_str().to_string())
             .unwrap_or_else(|| "function".to_string());
+        let tool_name = cap
+            .name("name")
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let args_str = cap.name("args").map(|m| m.as_str()).unwrap_or("{}");
+        if let Ok(tool_args) = serde_json::from_str(args_str) {
+            calls.push(ToolCall {
+                tool_type: tool_type.clone(),
+                tool_name,
+                tool_args,
+            });
+        }
+    }
+    // Then, try to find all old-format tool calls (if any)
+    for cap in re_old.captures_iter(response) {
+        let tool_type = "function".to_string();
         let tool_name = cap
             .name("name")
             .map(|m| m.as_str().to_string())
